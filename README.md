@@ -1,4 +1,4 @@
-# Secure TCP Communication Protocol
+# SecureAgentMessaging
 
 A robust, production-ready TCP communication protocol implementation with dynamic keep-alive functionality, designed to serve as the foundation for secure communication systems.
 

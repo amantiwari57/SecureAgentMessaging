@@ -1,4 +1,8 @@
 import net from "net";
+import { Encryption } from "../encryption";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 interface ProtocolMessage {
   type: "data" | "keepalive" | "ping" | "pong" | "close";
@@ -18,6 +22,8 @@ class TCPClient {
   private lastActivity: number;
   private isConnected: boolean = false;
   private messageId: number = 0;
+  private encryption: Encryption;
+  private buffer: string;
 
   constructor(
     host: string = "localhost",
@@ -31,6 +37,13 @@ class TCPClient {
     this.keepAliveInterval = keepAliveInterval;
     this.lastActivity = Date.now();
     this.client = new net.Socket();
+    const secret = process.env.SECRET_KEY;
+    const salt = process.env.SALT;
+    if (!secret || !salt) {
+      throw new Error("SECRET_KEY and SALT must be defined in .env file");
+    }
+    this.encryption = new Encryption(secret, salt);
+    this.buffer = "";
     this.setupEventHandlers();
   }
 
@@ -44,12 +57,18 @@ class TCPClient {
 
     this.client.on("data", (data) => {
       this.lastActivity = Date.now();
-
-      try {
-        const message: ProtocolMessage = JSON.parse(data.toString().trim());
-        this.handleMessage(message);
-      } catch (error) {
-        console.error("Invalid message format:", error);
+      this.buffer += data.toString();
+      let boundary = this.buffer.indexOf('\n');
+      while (boundary !== -1) {
+        const messageString = this.buffer.substring(0, boundary);
+        this.buffer = this.buffer.substring(boundary + 1);
+        try {
+          const message: ProtocolMessage = JSON.parse(messageString);
+          this.handleMessage(message);
+        } catch (error) {
+          console.error("Invalid message format:", error);
+        }
+        boundary = this.buffer.indexOf('\n');
       }
     });
 
@@ -72,6 +91,16 @@ class TCPClient {
   }
 
   private handleMessage(message: ProtocolMessage): void {
+    if (message.payload) {
+      try {
+        const decryptedPayload = this.encryption.decrypt(message.payload);
+        message.payload = JSON.parse(decryptedPayload);
+      } catch (error) {
+        console.error("Failed to decrypt or parse message:", error);
+        return;
+      }
+    }
+
     console.log(`Received ${message.type} from server:`, message.payload);
 
     switch (message.type) {
@@ -101,6 +130,13 @@ class TCPClient {
     if (!this.isConnected) {
       console.error("Not connected to server");
       return;
+    }
+
+    if (message.payload) {
+      const encryptedPayload = this.encryption.encrypt(
+        JSON.stringify(message.payload)
+      );
+      message.payload = encryptedPayload;
     }
 
     this.client.write(JSON.stringify(message) + "\n");

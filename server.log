@@ -1,0 +1,13 @@
+[dotenv@17.2.1] injecting env (0) from .env -- tip: ⚙️  override existing env vars with { override: true }
+TCP server listening on port 4000
+Keep-alive timeout: 30000ms
+Keep-alive interval: 10000ms
+Client connected: 127.0.0.1:4000
+Client connected: undefined:4000
+Client disconnected: undefined:4000
+Connection closed: undefined:4000
+Received data from 127.0.0.1:4000: {
+  name: "John",
+  age: 30,
+  email: "john@example.com",
+}

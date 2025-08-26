@@ -1,4 +1,8 @@
 import net from 'node:net';
+import { Encryption } from './encryption';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 interface ProtocolMessage {
   type: 'data' | 'keepalive' | 'ping' | 'pong' | 'close';
@@ -12,6 +16,7 @@ interface ConnectionInfo {
   lastActivity: number;
   keepAliveInterval?: NodeJS.Timeout;
   isAlive: boolean;
+  buffer: string;
 }
 
 class TCPServer {
@@ -20,12 +25,19 @@ class TCPServer {
   private connections: Map<string, ConnectionInfo> = new Map();
   private keepAliveTimeout: number; // milliseconds
   private keepAliveInterval: number; // milliseconds
+  private encryption: Encryption;
 
   constructor(port: number = 4000, keepAliveTimeout: number = 30000, keepAliveInterval: number = 10000) {
     this.port = port;
     this.keepAliveTimeout = keepAliveTimeout;
     this.keepAliveInterval = keepAliveInterval;
     this.server = net.createServer();
+    const secret = process.env.SECRET_KEY;
+    const salt = process.env.SALT;
+    if (!secret || !salt) {
+      throw new Error("SECRET_KEY and SALT must be defined in .env file");
+    }
+    this.encryption = new Encryption(secret, salt);
     this.setupEventHandlers();
   }
 
@@ -37,7 +49,8 @@ class TCPServer {
       const connectionInfo: ConnectionInfo = {
         socket,
         lastActivity: Date.now(),
-        isAlive: true
+        isAlive: true,
+        buffer: ''
       };
 
       this.connections.set(connectionId, connectionInfo);
@@ -51,17 +64,27 @@ class TCPServer {
   }
 
   private setupSocketHandlers(socket: net.Socket, connectionId: string): void {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return;
+
     socket.on('data', (data) => {
-      try {
-        const message: ProtocolMessage = JSON.parse(data.toString());
-        this.handleMessage(message, connectionId);
-      } catch (error) {
-        console.error('Invalid message format:', error);
-        this.sendMessage(socket, {
-          type: 'data',
-          payload: { error: 'Invalid message format' },
-          timestamp: Date.now()
-        });
+      connection.buffer += data.toString();
+      let boundary = connection.buffer.indexOf('\n');
+      while (boundary !== -1) {
+        const messageString = connection.buffer.substring(0, boundary);
+        connection.buffer = connection.buffer.substring(boundary + 1);
+        try {
+          const message: ProtocolMessage = JSON.parse(messageString);
+          this.handleMessage(message, connectionId);
+        } catch (error) {
+          console.error('Invalid message format:', error);
+          this.sendMessage(socket, {
+            type: 'data',
+            payload: { error: 'Invalid message format' },
+            timestamp: Date.now()
+          });
+        }
+        boundary = connection.buffer.indexOf('\n');
       }
     });
 
@@ -87,6 +110,16 @@ class TCPServer {
 
     connection.lastActivity = Date.now();
     connection.isAlive = true;
+
+    if (message.payload) {
+      try {
+        const decryptedPayload = this.encryption.decrypt(message.payload);
+        message.payload = JSON.parse(decryptedPayload);
+      } catch (error) {
+        console.error("Failed to decrypt or parse message:", error);
+        return;
+      }
+    }
 
     console.log(`Received ${message.type} from ${connectionId}:`, message.payload);
 
@@ -137,6 +170,12 @@ class TCPServer {
   }
 
   private sendMessage(socket: net.Socket, message: ProtocolMessage): void {
+    if (message.payload) {
+      const encryptedPayload = this.encryption.encrypt(
+        JSON.stringify(message.payload)
+      );
+      message.payload = encryptedPayload;
+    }
     socket.write(JSON.stringify(message) + '\n');
   }
 
@@ -177,7 +216,7 @@ class TCPServer {
   }
 
   public start(): void {
-    this.server.listen(this.port, () => {
+    this.server.listen(this.port, '127.0.0.1', () => {
       console.log(`TCP server listening on port ${this.port}`);
       console.log(`Keep-alive timeout: ${this.keepAliveTimeout}ms`);
       console.log(`Keep-alive interval: ${this.keepAliveInterval}ms`);

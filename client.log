@@ -1,0 +1,12 @@
+[dotenv@17.2.1] injecting env (0) from .env -- tip: ⚙️  specify custom .env file path with { path: '/custom/path/.env' }
+Connected to server
+Received data from server: {
+  name: "John",
+  age: 30,
+  email: "john@example.com",
+}
+Data received: {
+  name: "John",
+  age: 30,
+  email: "john@example.com",
+}
